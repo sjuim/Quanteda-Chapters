@@ -1,0 +1,91 @@
+---
+title: "Quanteda_Chapter_3"
+author: "Shreya Majumdar"
+date: "2024-04-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Quanteda Objects
+
+Corpus: a dataframe with character strings and variables. Key goal: combine text with document-level variables
+
+Tokens: A list of vectors containing tokens
+
+key: more efficient than strings, but still holds position info
+
+Document-feature matrix (DFM): Matrix holding features frequencies (bag-of-words).
+
+key: most efficient, but no position data![](images/Screen%20Shot%202024-04-16%20at%2011.42.26%20AM.png)
+
+## Create Corpus
+
+Make corpus from:
+
+-   character vector
+
+-   datafram of characters
+
+-   VCorpus of SimpleCorpus object (from tm package)
+
+```{r cars}
+corp_immig <- corpus(data_char_ukimmig2010, 
+                     docvars = data.frame(party = names(data_char_ukimmig2010)))
+print(corp_immig)
+```
+
+```{r}
+summary(corp_immig)
+```
+
+From dataframe:
+
+```{r pressure, echo=FALSE}
+# set path
+path_data <- system.file("extdata/", package = "readtext")
+
+# import csv file
+dat_inaug <- read.csv(paste0(path_data, "/csv/inaugCorpus.csv"))
+names(dat_inaug)
+
+corp_inaug <- corpus(dat_inaug, text_field = "texts")
+print(corp_inaug)
+```
+
+```{r}
+summary(corp_inaug, 5)
+```
+
+Change labels of corpus (under text):
+
+```{r}
+docid <- paste(dat_inaug$Year, 
+               dat_inaug$FirstName, 
+               dat_inaug$President, sep = " ")
+docnames(corp_inaug) <- docid
+print(corp_inaug)
+```
+
+```{r}
+summary(corp_inaug, 5)
+```
+
+## VCorpus
+
+```{r}
+corp_tm <- tm::VCorpus(tm::VectorSource(data_char_ukimmig2010))
+corp_quanteda <- corpus(corp_tm)
+```
+
+```{r}
+summary(corp_tm, 5)
+```
+
+# Document-Level Variables (docuvars)
+
+```{r}
+
+```

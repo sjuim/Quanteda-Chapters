@@ -1,0 +1,122 @@
+---
+title: "Quanteda_Chapter_2.Rmd"
+author: "Shreya Majumdar"
+date: "2024-04-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Import Preformatted Files
+
+```{r cars}
+require(quanteda)
+require(readtext)
+```
+
+### Spreadsheets
+
+First get data from readtext package, provides some sample packages. Get file path of given data
+
+```{r pressure, echo=FALSE}
+path_data <- system.file("extdata/", package = "readtext")
+```
+
+CSVs are read with read.csv()
+
+CSVs and TSVs can be read with readtext():
+
+```{r}
+dat_dail <- readtext(paste0(path_data, "/tsv/dailsample.tsv"), text_field = "speech")
+```
+
+To use data without a variable given in the document (such as in a .txt file), can use readtext() again. In this case, you generate DOCUMENT LEVEL VARIABLES, rather than column level variables. These are given by docvarnames parameter:
+
+```{r}
+dat_udhr <- readtext(paste0(path_data, "/txt/UDHR/*"))
+```
+
+```{r}
+dat_eu <- readtext(paste0(path_data, "/txt/EU_manifestos/*.txt"),
+                    docvarsfrom = "filenames", 
+                    docvarnames = c("unit", "context", "year", "language", "party"),
+                    dvsep = "_", 
+                    encoding = "ISO-8859-1")
+str(dat_eu)
+```
+
+### JSON
+
+Again use readtext()
+
+```{r}
+#where does this data come from?
+dat_twitter <- readtext("../data/twitter.json", source = "twitter")
+```
+
+```{r}
+#get column names
+head(names(dat_twitter))
+```
+
+### PDF
+
+Use readtext() again (super flexible!)
+
+```{r}
+dat_udhr <- readtext(paste0(path_data, "/pdf/UDHR/*.pdf"), 
+                      docvarsfrom = "filenames", 
+                      docvarnames = c("document", "language"),
+                      sep = "_")
+```
+
+### Word doc (.doc, .docx) --\> what is the difference?
+
+```{r}
+dat_word <- readtext(paste0(path_data, "/word/*.docx"))
+```
+
+## Dealing with different character encodings
+
+The standard character encoding is UTF-8, which is what we typically like to use. However, sometimes that is not how files are saved. Even so, we can still deal with this.
+
+Step 1: get various character encodings from temp_dir
+
+```{r}
+path_temp <- tempdir()
+unzip(system.file("extdata", "data_files_encodedtexts.zip", package = "readtext"), exdir = path_temp)
+```
+
+step 2: for this example, we will use this set of text files:
+
+```{r}
+filename <- list.files(path_temp, "^(Indian|UDHR_).*\\.txt$")
+head(filename)
+```
+
+Step 3: extract character encodings from the file names (t**his will not always be the case though! is this stored in the metadata?**):
+
+```{r}
+filename <- gsub(".txt$", "", filename)
+encoding <- sapply(strsplit(filename, "_"), "[", 3)
+head(encoding)
+```
+
+```{r}
+#encoding not supported by R
+#what does this do?
+setdiff(encoding, iconvlist())
+```
+
+Step 4: Conversion
+
+```{r}
+path_data <- system.file("extdata/", package = "readtext")
+dat_txt <- readtext(paste0(path_data, "/data_files_encodedtexts.zip"), 
+                     encoding = encoding,
+                     docvarsfrom = "filenames", 
+                     docvarnames = c("document", "language", "input_encoding"))
+print(dat_txt, n = 50)
+```
