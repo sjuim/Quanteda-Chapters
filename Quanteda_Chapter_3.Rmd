@@ -31,7 +31,7 @@ Make corpus from:
 
 -   VCorpus of SimpleCorpus object (from tm package)
 
-```{r cars}
+```{r}
 corp_immig <- corpus(data_char_ukimmig2010, 
                      docvars = data.frame(party = names(data_char_ukimmig2010)))
 print(corp_immig)
@@ -43,7 +43,7 @@ summary(corp_immig)
 
 From dataframe:
 
-```{r pressure, echo=FALSE}
+```{r}
 # set path
 path_data <- system.file("extdata/", package = "readtext")
 

@@ -9,34 +9,72 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## Import Preformatted Files
+## Quanteda Chapter 2
 
-```{r cars}
+The following packages are required for reading filings for text processing.
+
+```{r}
 require(quanteda)
 require(readtext)
 ```
 
-### Spreadsheets
+You may want to access text data from the ReadText packages, which provides a number of pre-formatted data files. To access a dataset from this package, you must get file path of given data.
 
-First get data from readtext package, provides some sample packages. Get file path of given data
-
-```{r pressure, echo=FALSE}
+```{r}
 path_data <- system.file("extdata/", package = "readtext")
 ```
 
-CSVs are read with read.csv()
+Note that the process for reading data files may depend on the type of data format. We will discuss how to import data in a few different formats.
 
-CSVs and TSVs can be read with readtext():
+### Spreadsheet Format (CSV, TSV)
+
+CSV stands for comma separated values file, while TSV stands for tab separated values file. In these types of files, the first row may hold a list of headers, while following rows hold observations. The information in each observation is separated by commas or tabs, and the number of commas/tabs appearing before a data point indicate which column in the observation the data point belongs to.
+
+The "spreadsheet format" is defined by having data where each column represents a document level variable. This type of data format is common for small instances, where all of the document-level variables can be efficiently stored in one file. There are pros and cons to this type of format:
+
+Pros:
+
+-   Data is easily accessible when the amount of data is small
+
+-   Document level variables are predefined
+
+Cons:
+
+-   Inefficient storage method for large amounts of text data.
+
+CSVs can be read with the function read.csv().
+
+```{r}
+dat_inaug <- read.csv(paste0(path_data, "/csv/inaugCorpus.csv"))
+```
+
+```{r}
+head(dat_inaug)
+```
+
+On the other hand, both CSVs and TSVs can be read with readtext().
 
 ```{r}
 dat_dail <- readtext(paste0(path_data, "/tsv/dailsample.tsv"), text_field = "speech")
 ```
 
-To use data without a variable given in the document (such as in a .txt file), can use readtext() again. In this case, you generate DOCUMENT LEVEL VARIABLES, rather than column level variables. These are given by docvarnames parameter:
-
 ```{r}
-dat_udhr <- readtext(paste0(path_data, "/txt/UDHR/*"))
+head(dat_dail)
 ```
+
+A more common storage approach is to use individual text files as data. This is more popular because often, the amount of data used is large, and therefore more efficiently stored in separate text files. Once again, there are pros and cons associated with this management strategy:
+
+Pros:
+
+-   Efficient for large amounts of text data
+
+-   Often allows for more precise handling of data
+
+Cons:
+
+-   Document level variables are not provided, must provide yourself.
+
+To use data without a variable given in the document (such as in a .txt file), can use readtext() again. In this case, you generate document level variables., rather than column level variables. These variable names are given by "docvarnames" parameter:
 
 ```{r}
 dat_eu <- readtext(paste0(path_data, "/txt/EU_manifestos/*.txt"),
@@ -49,11 +87,15 @@ str(dat_eu)
 
 ### JSON
 
-Again use readtext()
+JSON files are a type of file format based off JavaScript syntax. JSON files are much easier for humans to read and write.
+
+Like in the spreadsheet format, JSON files are best for smaller amounts of data. JSON files also provide column names for the document level variables.
+
+Note that the readtext() function may take more time to process JSONs as compared to other file formats.
 
 ```{r}
 #where does this data come from?
-dat_twitter <- readtext("../data/twitter.json", source = "twitter")
+dat_twitter <- readtext("data/twitter.json", source = "twitter")
 ```
 
 ```{r}
@@ -63,7 +105,7 @@ head(names(dat_twitter))
 
 ### PDF
 
-Use readtext() again (super flexible!)
+PDFs are portable, commonly accepted files that are often used to transfer information online. PDFs may or may not come with labels for the document level variables, but once again, the "docuvarnames" parameter can be used to assign names to the variables.
 
 ```{r}
 dat_udhr <- readtext(paste0(path_data, "/pdf/UDHR/*.pdf"), 
@@ -72,51 +114,28 @@ dat_udhr <- readtext(paste0(path_data, "/pdf/UDHR/*.pdf"),
                       sep = "_")
 ```
 
-### Word doc (.doc, .docx) --\> what is the difference?
+```{r}
+head(dat_udhr)
+```
+
+Question: Why does
+
+```         
+\033[3m\033[38;5;246m<chr>\033[39m\033[23m
+```
+
+keep appearing in outputs? Is this a way of representing null values?
+
+### Word documents
+
+Word documents refer to documents in the .doc, .docx file formats. These documents are most commonly accessed and edited through Microsoft Word.
 
 ```{r}
 dat_word <- readtext(paste0(path_data, "/word/*.docx"))
 ```
 
-## Dealing with different character encodings
-
-The standard character encoding is UTF-8, which is what we typically like to use. However, sometimes that is not how files are saved. Even so, we can still deal with this.
-
-Step 1: get various character encodings from temp_dir
-
 ```{r}
-path_temp <- tempdir()
-unzip(system.file("extdata", "data_files_encodedtexts.zip", package = "readtext"), exdir = path_temp)
+head(dat_word)
 ```
 
-step 2: for this example, we will use this set of text files:
-
-```{r}
-filename <- list.files(path_temp, "^(Indian|UDHR_).*\\.txt$")
-head(filename)
-```
-
-Step 3: extract character encodings from the file names (t**his will not always be the case though! is this stored in the metadata?**):
-
-```{r}
-filename <- gsub(".txt$", "", filename)
-encoding <- sapply(strsplit(filename, "_"), "[", 3)
-head(encoding)
-```
-
-```{r}
-#encoding not supported by R
-#what does this do?
-setdiff(encoding, iconvlist())
-```
-
-Step 4: Conversion
-
-```{r}
-path_data <- system.file("extdata/", package = "readtext")
-dat_txt <- readtext(paste0(path_data, "/data_files_encodedtexts.zip"), 
-                     encoding = encoding,
-                     docvarsfrom = "filenames", 
-                     docvarnames = c("document", "language", "input_encoding"))
-print(dat_txt, n = 50)
-```
+Another nice note: Calling the readtext() function automatically creates 2 document level variables: "doc_id" and "text." When the "docvarnames" parameter is used, the variable names will be added in addition to "doc_id" and "text."
