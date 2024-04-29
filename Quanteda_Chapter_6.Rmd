@@ -1,0 +1,516 @@
+---
+title: "Quanteda_Chapter_6"
+author: "Ethan Mah"
+date: "2024-04-28"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(quanteda)
+require(quanteda.textmodels)
+require(quanteda.textplots)
+require(quanteda.corpora)
+require(seededlda)
+require(newsmap)
+require(maps)
+require(caret)
+require(glmnet)
+require(ggplot2)
+require("LSX")
+```
+
+Note: The caret package (short for Classification And REgression Training) is a set of functions that attempt to streamline the process for creating predictive models. Glmnet is a package that fits generalized linear and similar models via penalized maximum likelihood.
+
+# Text Scaling and Document Classification
+
+This chapter focuses on how to derive latent positions from text data and how to classify documents.
+
+# Naive Bayes Classifier
+
+Naive Bayes is a supervised model usually used to classify documents into two or more categories. We train the classifier using class labels attached to documents, and predict the most likely class(es) of new unlabeled documents.
+
+data_corpus_moviereviews from the quanteda.textmodels package contains 2000 movie reviews classified either as “positive” or “negative”.
+
+```{r}
+corp_movies <- data_corpus_moviereviews
+summary(corp_movies, 5)
+```
+
+The variable “Sentiment” indicates whether a movie review was classified as positive or negative. In this example, we will use 1500 reviews as the training set and build a Naive Bayes classifier based on this subset. In the second step, we will predict the sentiment for the remaining reviews (our test set).
+
+Since the first 1000 reviews are negative and the remaining reviews are classified as positive, we need to draw a random sample of the documents.
+
+```{r}
+# generate 1500 numbers without replacement
+set.seed(300)
+id_train <- sample(1:2000, 1500, replace = FALSE)
+head(id_train, 10)
+```
+```{r}
+# create docvar with ID
+corp_movies$id_numeric <- 1:ndoc(corp_movies)
+
+# tokenize texts
+toks_movies <- tokens(corp_movies, remove_punct = TRUE, remove_number = TRUE) %>% 
+               tokens_remove(pattern = stopwords("en")) %>% 
+               tokens_wordstem()
+dfmt_movie <- dfm(toks_movies)
+
+# get training set
+dfmat_training <- dfm_subset(dfmt_movie, id_numeric %in% id_train)
+
+# get test set (documents not in id_train)
+dfmat_test <- dfm_subset(dfmt_movie, !id_numeric %in% id_train)
+```
+
+Next, we will train the naive Bayes classifier using textmodel_nb().
+```{r}
+tmod_nb <- textmodel_nb(dfmat_training, dfmat_training$sentiment)
+summary(tmod_nb)
+```
+Naive Bayes can only take features into consideration that occur both in the training set and the test set, but we can make the features identical using dfm_match()
+
+```{r}
+dfmat_matched <- dfm_match(dfmat_test, features = featnames(dfmat_training))
+actual_class <- dfmat_matched$sentiment
+predicted_class <- predict(tmod_nb, newdata = dfmat_matched)
+tab_class <- table(actual_class, predicted_class)
+tab_class
+```
+From the cross-table we can see that the number of false positives and false negatives is similar. The classifier made mistakes in both directions, but does not seem to over- or under-estimate one class.
+
+We can use the function confusionMatrix() from the caret package to assess the performance of the classification.
+
+```{r}
+confusionMatrix(tab_class, mode = "everything", positive = "pos")
+```
+
+Note: Precision, recall and the F1 score are frequently used to assess the classification performance. Precision is measured as TP / (TP + FP), where TP are the number of true positives and FP are the false positives. Recall divides the true positives by the sum of true positives and false negatives TP / (TP + FN). Finally, the F1 score is a harmonic mean of precision and recall 2 * (Precision * Recall) / (Precision + Recall).
+
+# Regularized Regression Classifier
+Regularized regression is a classification technique where the category of interest is regressed on text features using a penalized form of regression where parameter estimates are biased towards zero. Here we will be using a specific type of regularized regression, the Least Absolute Shrinkage and Selection Operator (or simply LASSO). However, the main alternative to LASSO, ridge regression, is conceptually very similar.
+
+In the LASSO estimator, the degree of penalization is determined by the regularization parameter `lambda`. We can use the cross-validation function available in the glmnet package to select the optimal value for `lambda`. We train the classifier using class labels attached to documents, and predict the most likely class(es) of new unlabelled documents. Although regularized regression is not part of the quanteda.textmodels package, the functions for regularized regression from the glmnet package can be easily worked into a quanteda workflow.
+```{r}
+corp_movies <- data_corpus_moviereviews
+summary(corp_movies, 5)
+```
+
+The variable “Sentiment” indicates whether a movie review was classified as positive or negative. In this example, we will use 1500 reviews as the training set and build a regularized regression classifier based on this subset. In the second step, we will predict the sentiment for the remaining reviews (our test set).
+
+Since the first 1000 reviews are negative and the remaining reviews are classified as positive, we need to draw a random sample of the documents.
+
+```{r}
+# generate 1500 numbers without replacement
+set.seed(300)
+id_train <- sample(1:2000, 1500, replace = FALSE)
+head(id_train, 10)
+```
+
+```{r}
+# create docvar with ID
+corp_movies$id_numeric <- 1:ndoc(corp_movies)
+
+# tokenize texts
+toks_movies <- tokens(corp_movies, remove_punct = TRUE, remove_number = TRUE) %>% 
+               tokens_remove(pattern = stopwords("en")) %>% 
+               tokens_wordstem()
+dfmt_movie <- dfm(toks_movies)
+
+# get training set
+dfmat_training <- dfm_subset(dfmt_movie, id_numeric %in% id_train)
+
+# get test set (documents not in id_train)
+dfmat_test <- dfm_subset(dfmt_movie, !id_numeric %in% id_train)
+```
+
+Next we choose `lambda` using cv.glmnet from the glmnet package. cv.glmnet requires an input matrix `x` and a response vector `y`. For the input matrix, we will use the training set converted to a sparse matrix. For the response vector, we will use a dichotomous indicator of review sentiment in the training set with positive reviews coded as 1 and negative reviews as 0.
+
+We use cv.glmnet() to select the value of `lambda` that yields the smallest classification error. If you set `alpha = 1`, it selects the LASSO estimator. If you set `nfold = 5`, it partitions the data into five subsets.
+
+```{r}
+lasso <- cv.glmnet(x = dfmat_training,
+                   y = as.integer(dfmat_training$sentiment == "pos"),
+                   alpha = 1,
+                   nfold = 5,
+                   family = "binomial")
+```
+
+As an initial evaluation of the model, we can print the most predictive features. We begin by obtaining the best value of lambda:
+
+```{r}
+index_best <- which(lasso$lambda == lasso$lambda.min)
+beta <- lasso$glmnet.fit$beta[, index_best]
+```
+
+We can now look at the most predictive features for the chosen lambda:
+
+```{r}
+head(sort(beta, decreasing = TRUE), 20)
+```
+
+predict.glmnet can only take features into consideration that occur both in the training set and the test set, but we can make the features identical using dfm_match().
+
+```{r}
+dfmat_matched <- dfm_match(dfmat_test, features = featnames(dfmat_training))
+```
+
+Next, we can obtain predicted probabilities for each review in the test set.
+
+```{r}
+pred <- predict(lasso, dfmat_matched, type = "response", s = lasso$lambda.min)
+head(pred)
+```
+
+Let's inspect how well the classification worked.
+
+```{r}
+actual_class <- as.integer(dfmat_matched$sentiment == "pos")
+predicted_class <- as.integer(predict(lasso, dfmat_matched, type = "class"))
+tab_class <- table(actual_class, predicted_class)
+tab_class
+```
+
+From the cross-table we can see that the model slightly under-predicts negative reviews, i.e. produces slightly more false negatives than false positives, but most reviews are correctly predicted.
+
+We can use the function confusionMatrix() from the caret package to quantify the performance of the classification.
+
+```{r}
+confusionMatrix(tab_class, mode = "everything")
+```
+
+# Wordscores
+
+Wordscores is a scaling model for estimating the positions (mostly of political actors) for dimensions that are specified a priori. Wordscores was introduced in Laver, Benoit and Garry (2003) and is widely used among political scientists.
+
+Training a Wordscores model requires reference scores for texts whose policy positions on well-defined a priori dimensions are “known”. Afterwards, Wordscores estimates the positions for the remaining “virgin” texts.
+
+In this example, we will use manifestos of the 2013 and 2017 German federal elections. For the 2013 elections we will assign the average expert evaluations from the 2014 Chapel Hill Expert Survey for the five major parties in order to predict the party positions for the 2017 manifestos.
+
+```{r}
+corp_ger <- download(url = "https://www.dropbox.com/s/uysdoep4unfz3zp/data_corpus_germanifestos.rds?dl=1")
+summary(corp_ger)
+```
+
+Now we can apply the Wordscores algorithm to a document-feature matrix.
+
+```{r}
+# tokenize texts
+toks_ger <- tokens(corp_ger, remove_punct = TRUE)
+
+# create a document-feature matrix
+dfmat_ger <- dfm(toks_ger) %>% 
+             dfm_remove(pattern = stopwords("de"))
+
+# apply Wordscores algorithm to document-feature matrix
+tmod_ws <- textmodel_wordscores(dfmat_ger, y = corp_ger$ref_score, smooth = 1)
+summary(tmod_ws)
+```
+
+Next, we will predict the Wordscores for the unknown virgin texts.
+
+```{r}
+# Next, we will predict the Wordscores for the unknown virgin texts.
+pred_ws <- predict(tmod_ws, se.fit = TRUE, newdata = dfmat_ger)
+```
+
+Finally, we can plot the fitted scaling model using quanteda‘s textplot_scale1d() function.
+
+```{r}
+textplot_scale1d(pred_ws)
+```
+
+# Wordfish
+
+Wordfish is a Poisson scaling model of one-dimensional document positions (Slapin and Proksch 2008). Wordfish also allows for scaling documents, but in comparison to Wordscores, reference scores/texts are not required. Wordfish is an unsupervised one-dimensional text scaling method, meaning that it estimates the positions of documents solely based on the observed word frequencies.
+
+In this example, we will show how to apply Wordfish to the Irish budget speeches from 2010. First, we will create a document-feature matrix. Afterwards, we will run Wordfish.
+
+```{r}
+toks_irish <- tokens(data_corpus_irishbudget2010, remove_punct = TRUE)
+dfmat_irish <- dfm(toks_irish)
+tmod_wf <- textmodel_wordfish(dfmat_irish, dir = c(6, 5))
+summary(tmod_wf)
+```
+
+We can plot the results of a fitted scaling model using textplot_scale1d().
+
+```{r}
+textplot_scale1d(tmod_wf)
+```
+
+The function also allows you to plot scores by a grouping variable, in this case the party affiliation of the speakers.
+
+```{r}
+textplot_scale1d(tmod_wf, groups = dfmat_irish$party)
+```
+
+Finally, we can plot the estimated word positions and highlight certain features.
+
+```{r}
+textplot_scale1d(tmod_wf, margin = "features", 
+                 highlighted = c("government", "global", "children", 
+                                 "bank", "economy", "the", "citizenship",
+                                 "productivity", "deficit"))
+```
+
+# Correspondence Analysis
+
+Correspondence analysis is a technique to scale documents on multiple dimensions. Correspondence analysis is similar to principal component analysis but works for categorical variables (contingency table).
+
+textmodel_ca() provides similar functionality to the ca package, but quanteda‘s version is more efficient for textual data.
+You can plot positions of documents on a one-dimensional scale using textplot_scale1d().
+
+```{r}
+toks_irish <- tokens(data_corpus_irishbudget2010, remove_punct = TRUE)
+dfmat_irish <- dfm(toks_irish) %>% dfm_remove(pattern = stopwords("en"))
+
+tmod_ca <- textmodel_ca(dfmat_irish)
+textplot_scale1d(tmod_ca)
+```
+
+If you want to plot documents on multi-dimensional scale, you can use coef() to obtain coordinates of lower dimensions.
+
+```{r}
+dat_ca <- data.frame(dim1 = coef(tmod_ca, doc_dim = 1)$coef_document, 
+                     dim2 = coef(tmod_ca, doc_dim = 2)$coef_document)
+head(dat_ca)
+plot(1, xlim = c(-2, 2), ylim = c(-2, 2), type = "n", xlab = "Dimension 1", ylab = "Dimension 2")
+grid()
+text(dat_ca$dim1, dat_ca$dim2, labels = rownames(dat_ca), cex = 0.8, col = rgb(0, 0, 0, 0.7))
+```
+
+# Topic Models
+
+Topics models are unsupervised document classification techniques. By modeling distributions of topics over words and words over documents, topic models identify the most discriminatory groups of documents automatically. 
+
+We will select only news articles published in 2016 using corpus_subset() and the year function from the lubridate package.
+```{r}
+corp_news <- download("data_corpus_guardian") # 6,000 Guardian news articles from 2012 to 2016
+corp_news_2016 <- corpus_subset(corp_news, year(date) == 2016)
+ndoc(corp_news_2016)
+```
+
+Further, after removal of function words and punctuation in dfm(), we will only keep the top 20% of the most frequent features (min_termfreq = 0.8) that appear in less than 10% of all documents (max_docfreq = 0.1) using dfm_trim() to focus on common but distinguishing features.
+```{r}
+toks_news <- tokens(corp_news_2016, remove_punct = TRUE, remove_numbers = TRUE, remove_symbol = TRUE)
+toks_news <- tokens_remove(toks_news, pattern = c(stopwords("en"), "*-time", "updated-*", "gmt", "bst"))
+dfmat_news <- dfm(toks_news) %>% 
+              dfm_trim(min_termfreq = 0.8, termfreq_type = "quantile",
+                       max_docfreq = 0.1, docfreq_type = "prop")
+```
+
+Note: quanteda does not implement topic models, but you can fit LDA and seeded-LDA with the seededlda package.
+
+## Linear discriminant analysis (LDA)
+
+`k = 10` specifies the number of topics to be discovered. This is an important parameter and you should try a variety of values and validate the outputs of your topic models thoroughly.
+
+You can extract the most important terms for each topic from the model using terms().
+
+```{r}
+tmod_lda <- textmodel_lda(dfmat_news, k = 10)
+terms(tmod_lda, 10)
+```
+
+You can then obtain the most likely topics using topics() and save them as a document-level variable.
+
+```{r}
+head(topics(tmod_lda), 20)
+
+# assign topic as a new document-level variable
+dfmat_news$topic <- topics(tmod_lda)
+
+# cross-table of the topic frequency
+table(dfmat_news$topic)
+```
+
+## Seeded LDA
+
+In the seeded LDA, you can pre-define topics in LDA using a dictionary of “seed” words.
+
+```{r}
+# load dictionary containing seed words
+dict_topic <- dictionary(file = "dictionary/topics.yml")
+print(dict_topic)
+```
+
+The number of topics is determined by the number of keys in the dictionary. Next, we can fit the seeded LDA model using textmodel_seededlda() and specify the dictionary with our relevant keywords.
+
+```{r}
+tmod_slda <- textmodel_seededlda(dfmat_news, dictionary = dict_topic)
+```
+
+Some of the topic words are seed words, but the seeded LDA identifies many other related words.
+
+```{r}
+terms(tmod_slda, 20)
+```
+
+topics() returns dictionary keys as the most likely topics of documents.
+
+```{r}
+head(topics(tmod_slda), 20)
+# assign topics from seeded LDA as a document-level variable to the dfm
+dfmat_news$topic2 <- topics(tmod_slda)
+
+# cross-table of the topic frequency
+table(dfmat_news$topic2)
+```
+
+# Newsmap
+
+Newsmap is a semi-supervised model for geographical document classification. While (full) supervised models are trained on manually classified data, this semi-supervised model learns from “seed words” in dictionaries.
+
+Download a corpus with news articles using quanteda.corpora‘s download() function.
+
+```{r}
+corp_news <- download(url = "https://www.dropbox.com/s/r8zhsu8zvjzhnml/data_corpus_yahoonews.rds?dl=1")
+ndoc(corp_news)
+```
+
+corp_news contains 10,000 news summaries downloaded from Yahoo News in 2014.
+Proper nouns are the most useful features of documents for geographical classification. However, not all capitalized words are proper nouns, so we define custom stopwords.
+
+
+```{r}
+range(corp_news$date)
+month <- c("January", "February", "March", "April", "May", "June",
+           "July", "August", "September", "October", "November", "December")
+day <- c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
+agency <- c("AP", "AFP", "Reuters")
+toks_news <- tokens(corp_news, remove_punct = TRUE) %>% 
+             tokens_remove(pattern = c(stopwords("en"), month, day, agency), 
+                           valuetype = "fixed", padding = TRUE)
+```
+
+newsmap contains seed geographical dictionaries in English, German, Spanish, Japanese and Russian languages. data_dictionary_newsmap_en is the seed dictionary for English texts.
+
+```{r}
+toks_label <- tokens_lookup(toks_news, dictionary = data_dictionary_newsmap_en, 
+                            levels = 3) # level 3 is countries
+dfmat_label <- dfm(toks_label, tolower = FALSE)
+
+dfmat_feat <- dfm(toks_news, tolower = FALSE)
+dfmat_feat_select <- dfm_select(dfmat_feat, pattern = "^[A-Z][A-Za-z0-9]+", 
+                                valuetype = "regex", case_insensitive = FALSE) %>% 
+                     dfm_trim(min_termfreq = 10)
+
+tmod_nm <- textmodel_newsmap(dfmat_feat_select, y = dfmat_label)
+```
+
+The seed dictionary contains only names of countries and capital cities, but the model additionally extracts features associated to the countries. These country codes are defined in ISO 3166-1.
+
+```{r}
+coef(tmod_nm, n = 15)[c("US", "GB", "FR", "BR", "JP")]
+```
+
+Tip: Names of people, organizations and places are often multi-word expressions. To distinguish between “New York” and “York”, for example, it is useful to compound tokens using tokens_compound() as explained in Chpt 5 Advanced Operations.
+
+You can predict the most strongly associated countries using predict() and count the frequency using table().
+
+```{r}
+pred_nm <- predict(tmod_nm)
+head(pred_nm, 20)
+```
+
+Factor levels are set to obtain zero counts for countries that did not appear in the corpus.
+
+```{r}
+count <- sort(table(factor(pred_nm, levels = colnames(dfmat_label))), decreasing = TRUE)
+head(count, 20)
+```
+
+You can visualise the distribution of global news attention using geom_map().
+
+```{r}
+dat_country <- as.data.frame(count, stringsAsFactors = FALSE)
+colnames(dat_country) <- c("id", "frequency")
+
+world_map <- map_data(map = "world")
+world_map$region <- iso.alpha(world_map$region) # convert country name to ISO code
+
+ggplot(dat_country, aes(map_id = id)) +
+      geom_map(aes(fill = frequency), map = world_map) +
+      expand_limits(x = world_map$long, y = world_map$lat) +
+      scale_fill_continuous(name = "Frequency") +
+      theme_void() +
+      coord_fixed()
+```
+
+# Latent Semantic Scaling
+
+Latent Semantic Scaling (LSS) is a flexible and cost-efficient semi-supervised document scaling technique. The technique relies on word embeddings and users only need to provide a small set of “seed words” to locate documents on a specific dimension.
+
+We must segment news articles into sentences in the corpus to accurately estimate semantic proximity between words. We can also use the Marimo stopwords list (source = "marimo") to remove words commonly used in news reports.
+
+```{r}
+corp_news <- download("data_corpus_guardian") # 6,000 Guardian news articles from 2012 to 2016
+# tokenize text corpus and remove various features
+corp_sent <- corpus_reshape(corp_news, to =  "sentences")
+toks_sent <- corp_sent %>% 
+    tokens(remove_punct = TRUE, remove_symbols = TRUE, 
+           remove_numbers = TRUE, remove_url = TRUE) %>% 
+    tokens_remove(stopwords("en", source = "marimo")) %>%
+    tokens_remove(c("*-time", "*-timeUpdated", "GMT", "BST", "*.com"))  
+
+# create a document feature matrix from the tokens object
+dfmat_sent <- toks_sent %>% 
+    dfm() %>% 
+    dfm_remove(pattern = "") %>% 
+    dfm_trim(min_termfreq = 5)
+
+topfeatures(dfmat_sent, 20)
+```
+We will use generic sentiment seed words to perform sentiment analysis. With the seed words, LSS computes polarity of words frequent in the context of economy. We can identify context words by char_context(pattern = "econom*") before fitting the model.
+
+```{r}
+seed <- as.seedwords(data_dictionary_sentiment)
+print(seed)
+
+# identify context words 
+eco <- char_context(toks_sent, pattern = "econom*", p = 0.05)
+
+# run LSS model
+tmod_lss <- textmodel_lss(dfmat_sent, seeds = seed,
+                          terms = eco, k = 300, cache = TRUE)
+
+head(coef(tmod_lss), 20) # most positive words
+tail(coef(tmod_lss), 20) # most negative words
+```
+
+By highlighting negative words in a manually compiled sentiment dictionary (data_dictionary_LSD2015), we can confirm that many of the words (but not all of them) have negative meanings in the corpus.
+
+```{r}
+textplot_terms(tmod_lss, data_dictionary_LSD2015["negative"])
+```
+
+We must reconstruct original articles from their sentences using dfm_group() before predicting polarity of documents.
+
+```{r}
+dfmat_doc <- dfm_group(dfmat_sent)
+dat <- docvars(dfmat_doc)
+dat$fit <- predict(tmod_lss, newdata = dfmat_doc)
+```
+
+We can smooth polarity scores of documents to visualize the trend using smooth_lss(). If engine = "locfit", smoothing is very fast even when there are many documents.
+
+```{r}
+dat_smooth <- smooth_lss(dat, engine = "locfit")
+head(dat_smooth)
+```
+
+In the plot below, the circles are polarity scores of documents and the curve is their local means with 95% confidence intervals.
+
+```{r}
+plot(dat$date, dat$fit, col = rgb(0, 0, 0, 0.05), pch = 16, ylim = c(-0.5, 0.5),
+     xlab = "Time", ylab = "Economic sentiment")
+lines(dat_smooth$date, dat_smooth$fit, type = "l")
+lines(dat_smooth$date, dat_smooth$fit + dat_smooth$se.fit * 1.96, type = "l", lty = 3)
+lines(dat_smooth$date, dat_smooth$fit - dat_smooth$se.fit * 1.96, type = "l", lty = 3)
+abline(h = 0, lty = c(1, 2))
+```

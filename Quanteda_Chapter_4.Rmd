@@ -1,0 +1,148 @@
+---
+title: "Quanteda_Chapter_4"
+author: "Ethan Mah"
+date: "2024-04-24"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(quanteda)
+require(quanteda.textstats)
+require(quanteda.textplots)
+#install.packages("devtools")
+#devtools::install_github("quanteda/quanteda.corpora")
+require(quanteda.corpora)
+require(ggplot2)
+```
+
+# Statistical Analysis
+# Simple Frequency Analysis
+
+textstat_frequency() shows both term and document frequencies. You can also use the function to find the most frequent features within groups.
+
+```{r}
+corp_tweets <- download(url = "https://www.dropbox.com/s/846skn1i5elbnd2/data_corpus_sampletweets.rds?dl=1")
+toks_tweets <- tokens(corp_tweets, remove_punct = TRUE) %>% 
+               tokens_keep(pattern = "#*")
+dfmat_tweets <- dfm(toks_tweets)
+
+tstat_freq <- textstat_frequency(dfmat_tweets, n = 5, groups = lang)
+head(tstat_freq, 20)
+```
+
+```{r}
+dfmat_tweets %>% 
+  textstat_frequency(n = 15) %>% 
+  ggplot(aes(x = reorder(feature, frequency), y = frequency)) +
+  geom_point() +
+  coord_flip() +
+  labs(x = NULL, y = "Frequency") +
+  theme_minimal()
+```
+```{r}
+set.seed(132)
+textplot_wordcloud(dfmat_tweets, max_words = 100)
+```
+
+```{r}
+# create document-level variable indicating whether tweet was in English or other language
+corp_tweets$language <- factor(ifelse(corp_tweets$lang == "English", "English", "Not English"))
+
+# tokenize texts
+toks_tweets <- tokens(corp_tweets)
+
+# create a grouped dfm and compare groups
+dfmat_corp_language <- dfm(toks_tweets) %>% 
+                       dfm_keep(pattern = "#*") %>% 
+                       dfm_group(groups = language)
+
+# create wordcloud
+set.seed(132) # set seed for reproducibility
+textplot_wordcloud(dfmat_corp_language, comparison = TRUE, max_words = 200)
+```
+
+# Lexical Diversity
+
+textstat_lexdiv() calculates various lexical diversity measures based on the number of unique types of tokens and the length of a document. It is useful, for instance, for analysing speakers’ or writers’ linguistic skills, or the complexity of ideas expressed in documents.
+
+```{r}
+toks_inaug <- tokens(data_corpus_inaugural)
+dfmat_inaug <- dfm_remove(dfm(toks_inaug), pattern = stopwords("en"))
+tstat_lexdiv <- textstat_lexdiv(dfmat_inaug)
+tail(tstat_lexdiv, 5)
+```
+
+TTR is the ratio obtained by dividing the types (the total number of different words) occurring in a text or utterance by its tokens (the total number of words). A high TTR indicates a high degree of lexical variation while a low TTR indicates the opposite.
+
+```{r}
+plot(tstat_lexdiv$TTR, type = "l", xaxt = "n", xlab = NULL, ylab = "TTR")
+grid()
+axis(1, at = seq_len(nrow(tstat_lexdiv)), labels = dfmat_inaug$President)
+```
+
+# Document/Feature Similarity
+
+textstat_dist() calculates similarities of documents or features for various measures. The output is compatible with R’s dist(), so hierarchical clustering can be performed without any transformation.
+
+```{r}
+toks_inaug <- tokens(data_corpus_inaugural)
+dfmat_inaug <- dfm_remove(dfm(toks_inaug), pattern = stopwords("en"))
+tstat_dist <- as.dist(textstat_dist(dfmat_inaug))
+clust <- hclust(tstat_dist)
+plot(clust, xlab = "Distance", ylab = NULL)
+```
+
+# Relative Frequency Analysis (Keyness)
+
+Keyness is a signed two-by-two association score originally implemented in WordSmith to identify frequent words in documents in a target and reference group.
+
+```{r}
+require(lubridate)
+```
+
+```{r}
+corp_news <- download("data_corpus_guardian")
+```
+textstat_keyness() compares frequencies of words between target and reference documents. 
+In this example, target documents are news articles published in 2016 and reference documents are those published in 2012-2015. We use the lubridate package to retrieve the year of the publication of an article.
+
+```{r}
+toks_news <- tokens(corp_news, remove_punct = TRUE) 
+dfmat_news <- dfm(toks_news)
+tstat_key <- textstat_keyness(dfmat_news, 
+                              target = year(dfmat_news$date) >= 2016)
+textplot_keyness(tstat_key)
+```
+# Collocation Analysis
+
+A collocation analysis allows us to identify contiguous collocations of words. 
+One of the most common types of multi-word expressions are proper names, which can be identified simply based on capitalization in English texts.
+
+```{r}
+corp_news <- download("data_corpus_guardian") # 6,000 Guardian news articles from 2012 to 2016
+toks_news <- tokens(corp_news, remove_punct = TRUE)
+tstat_col_caps <- tokens_select(toks_news, pattern = "^[A-Z]", 
+                                valuetype = "regex", 
+                                case_insensitive = FALSE, 
+                                padding = TRUE) %>% 
+                  textstat_collocations(min_count = 100)
+head(tstat_col_caps, 20)
+```
+
+Note: lambda measures the strength of the relationship or interaction between these multi-word expressions and other factors in the analysis. It essentially tells us how much impact these specific groups of words have on the statistical model being studied. The Wald z-statistic quantifies the significance of the lambda coefficient.  It helps determine if the observed relationship between the multi-word expressions and the other factors is statistically significant.
+
+Collocations can be longer than the default length of 2 words.
+In the example below we identify collocations consisting of three words.
+
+```{r}
+tstat_col2 <- tokens_select(toks_news, pattern = "^[A-Z]", 
+                                valuetype = "regex", 
+                                case_insensitive = FALSE, 
+                                padding = TRUE) %>% 
+              textstat_collocations(min_count = 100, size = 3)
+head(tstat_col2, 20)
+```
